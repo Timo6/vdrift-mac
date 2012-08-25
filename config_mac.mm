@@ -2,24 +2,43 @@
 
 char* get_mac_data_dir()
 {
-    NSAutoreleasePool   *pool = [[NSAutoreleasePool alloc] init];
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     
-    NSString    *basePath = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
-    NSString    *resourcePath = [[NSBundle mainBundle] resourcePath];
-    NSString    *path;
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSDictionary *values = [[NSUserDefaultsController sharedUserDefaultsController] values];
+    NSBundle *bundle = [NSBundle mainBundle];
     
-    if ([[NSFileManager defaultManager] fileExistsAtPath:[resourcePath stringByAppendingString:@"/data/settings/options.config"]])
+    NSString *optionsPath = @"/settings/options.config";
+    NSString *optionsPathLong = @"/data/settings/options.config";
+    
+    NSString *basePath = [[bundle bundlePath] stringByDeletingLastPathComponent];
+    NSString *resourcePath = [bundle resourcePath];
+    NSString *lastPath = [values valueForKey:@"LastPath"];
+    NSString *choosenPath = [values valueForKey:@"ChoosenPath"];
+    NSString *path;
+    
+    if ([fileManager fileExistsAtPath:[lastPath stringByAppendingPathComponent:optionsPath]])
     {
-        path = [resourcePath stringByAppendingString:@"/data"];
+        path = lastPath;
     }
-    else if ([[NSFileManager defaultManager] fileExistsAtPath:[basePath stringByAppendingString:@"/data/settings/options.config"]])
+    else if ([fileManager fileExistsAtPath:[basePath stringByAppendingPathComponent:optionsPathLong]])
     {
-        path = [basePath stringByAppendingString:@"/data"];
+        path = [[basePath stringByAppendingString:@"/data"] stringByResolvingSymlinksInPath];
+        [values setValue:path forKey:@"LastPath"];
+    }
+    else if ([fileManager fileExistsAtPath:[resourcePath stringByAppendingPathComponent:optionsPathLong]])
+    {
+        path = [[resourcePath stringByAppendingString:@"/data"] stringByResolvingSymlinksInPath];
+        [values setValue:path forKey:@"LastPath"];
+    }
+    else if ([fileManager fileExistsAtPath:[choosenPath stringByAppendingPathComponent:optionsPath]])
+    {
+        path = choosenPath;
+        [values setValue:path forKey:@"LastPath"];
     }
     else
     {
-        NSApplication   *myApplication;
-        myApplication = [NSApplication sharedApplication];
+        NSApplication *myApplication = [NSApplication sharedApplication];
         
         NSAlert *firstAlert = [NSAlert alertWithMessageText: @"Can't find data"
                                               defaultButton: @"Choose"
@@ -27,23 +46,21 @@ char* get_mac_data_dir()
                                                 otherButton: nil
                                   informativeTextWithFormat: @"Please choose the data folder."];
         
-        
         if ([firstAlert runModal] == NSAlertDefaultReturn)
         {
             NSOpenPanel *findData = [NSOpenPanel openPanel];
             [findData setAllowsMultipleSelection:NO];
             [findData setCanChooseDirectories:YES];
             [findData setCanChooseFiles:NO];
-            [findData setCanCreateDirectories:NO];
-            [findData setResolvesAliases:NO];
-            [findData setDirectory:basePath];
-            [findData setTitle:@"Choose Data Folder"];
+            [findData setResolvesAliases:YES];
             
             if ([findData runModal] == NSFileHandlingPanelOKButton)
             {
-                path = [[findData filenames] objectAtIndex:0];
+                path = [[[findData URLs] objectAtIndex:0] path];
+                [values setValue:path forKey:@"ChoosenPath"];
+                [values setValue:path forKey:@"LastPath"];
                 
-                if (![[NSFileManager defaultManager] fileExistsAtPath:[path stringByAppendingString:@"/settings/options.config"]])
+                if (![fileManager fileExistsAtPath:[path stringByAppendingPathComponent:optionsPath]])
                 {
                     NSAlert *secondAlert = [NSAlert alertWithMessageText: @"Can't find data"
                                                            defaultButton: @"Quit"
@@ -55,71 +72,18 @@ char* get_mac_data_dir()
                     [pool release];
                     exit(1);
                 }
-            } 
+            }
             else
             {
                 [pool release];
                 exit(1);
             }
         }
-        else 
+        else
         {
             [pool release];
             exit(1);
         }
-    }
-    
-    CFStringRef resolvedPath = nil;
-    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, (CFStringRef)path, kCFURLPOSIXPathStyle, true);
-    
-    if (url != NULL)
-    {
-        FSRef fsRef;
-        
-        if (CFURLGetFSRef(url, &fsRef))
-        {
-            Boolean isFolder, isAlias;
-            OSErr oserr = FSResolveAliasFile (&fsRef, true, &isFolder, &isAlias);
-            
-            if(oserr != noErr)
-            {
-                NSLog(@"FSResolveAliasFile failed: status = %d", oserr);
-            }
-            else
-            {
-                if(isAlias)
-                {
-                    CFURLRef resolved_url = CFURLCreateFromFSRef(NULL, &fsRef);
-                    
-                    if (resolved_url != NULL)
-                    {
-                        resolvedPath = CFURLCopyFileSystemPath(resolved_url, kCFURLPOSIXPathStyle);
-                        CFRelease(resolved_url);
-                    }
-                }
-            }
-        }
-        else // Failed to convert URL to a file or directory object.
-        {
-            NSApplication *myApplication;
-            myApplication = [NSApplication sharedApplication];
-            
-            NSAlert *theAlert = [NSAlert alertWithMessageText: @"Can't find data"
-                                                defaultButton: @"Quit"
-                                              alternateButton: nil
-                                                  otherButton: nil
-                                    informativeTextWithFormat: @"Please make sure a folder named \"data\" is in:\n - the same folder as VDrift.app; or\n - VDrift.app/Contents/Resources"];
-            [theAlert runModal];
-            
-            [pool release];
-            exit(1);
-        }
-    }
-    
-    if(resolvedPath != nil)
-    {
-        path = [NSString stringWithString:(NSString *)resolvedPath];
-        CFRelease(resolvedPath);
     }
     
     if ([path canBeConvertedToEncoding:NSUTF8StringEncoding])
@@ -136,16 +100,15 @@ char* get_mac_data_dir()
     }
     else
     {
-        NSApplication *myApplication;
-        myApplication = [NSApplication sharedApplication];
+        NSApplication *myApplication = [NSApplication sharedApplication];
         
-        NSAlert *theAlert = [NSAlert alertWithMessageText: @"Can't find data"
-                                            defaultButton: @"Quit"
-                                          alternateButton: nil
-                                              otherButton: nil
-                                informativeTextWithFormat: @"Please move VDrift to a sane location on your computer, without weird characters in it's path!"];
+        NSAlert *saneAlert = [NSAlert alertWithMessageText: @"Can't find data"
+                                             defaultButton: @"Quit"
+                                           alternateButton: nil
+                                               otherButton: nil
+                                 informativeTextWithFormat: @"Please move the data to a sane location on your computer, without weird characters in it's path!"];
         
-        [theAlert runModal];
+        [saneAlert runModal];
         
         [pool release];
         exit(1);
